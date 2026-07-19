@@ -86,6 +86,25 @@ If `pimptune` logs show it successfully querying Microsoft Graph (instead of an 
 
 At this point `https://${PUBLIC_HOSTNAME}/scep/pkiclient.exe` is your SCEP enrollment endpoint and `https://${PUBLIC_HOSTNAME}/crl` is your CRL distribution point — configure these in your Intune SCEP certificate profile.
 
+## Root CRL (optional, non-standard)
+
+`docker-compose.yaml` also defines a `root-crl` service (nginx) that publishes a CRL for the **root** CA, separate from the intermediate's CRL that `pimptune` already serves at `/crl` above. This isn't standard practice — checking a root's own CRL is circular, since you'd need to already trust the root to trust the signature on its revocation list. It exists to test whether publishing one affects which certificate store an MDM-pushed root cert lands in on Windows (see the comment at the top of `scripts/03-generate-root-crl.sh`). Skip this section entirely if you don't care about that; nothing else in the stack depends on it.
+
+1. Generate it, once `01-generate-pki.sh` has produced `./info/root_ca.crt` and `./info/root_ca.key`:
+
+   ```bash
+   bash scripts/03-generate-root-crl.sh
+   ```
+
+   This writes `./rootcrl/root_ca.crl`, valid for `CRL_DAYS` days (default 30). It's a static file — nothing auto-regenerates it. Re-run the script before it expires (put it on a cron job if you're keeping this around), or clients checking root-CRL freshness will start treating it as stale.
+
+2. Add a **second** Public Hostname route on the same Cloudflare Tunnel used above:
+   - **Subdomain/domain**: same hostname as `PUBLIC_HOSTNAME`
+   - **Path**: `^/rootcrl`
+   - **Service**: `HTTP` → `root-crl:80`
+
+3. `docker compose up -d root-crl` (already included if you ran `docker compose up -d` for everything). The CRL is then served at `https://${PUBLIC_HOSTNAME}/rootcrl/root_ca.crl`.
+
 ## Intune configuration profiles
 
 Devices need to trust the CA chain *and* know how to enroll against it. That's two things in Intune: two **Trusted certificate** profiles (root + intermediate) and one **SCEP certificate** profile. All three need to be assigned to the same device/user group, or enrollment will fail with a chain-trust error even though SCEP itself works.
@@ -255,14 +274,17 @@ Other things worth doing before this is load-bearing:
 ## Repo layout
 
 ```
-docker-compose.yaml       step-ca + pimptune + cloudflared
+docker-compose.yaml       step-ca + pimptune + root-crl + cloudflared
+nginx-rootcrl.conf          nginx config for the optional root-crl service
 .env.example               copy to .env
 scripts/
   01-generate-pki.sh        creates root/intermediate/RA certs into ./info
   02-bootstrap-step-ca.sh   step ca init + pimptune provisioner + config patching into ./ca
-  quickstart.sh             runs both, plus .env setup
+  03-generate-root-crl.sh   optional: generates the root CA's own CRL into ./rootcrl (not run by quickstart.sh)
+  quickstart.sh             runs 01 and 02, plus .env setup
 ./info/    (gitignored)     generated PKI material — root_ca.key lives here
 ./ca/      (gitignored)     step-ca's runtime state (config, certs, secrets, db)
 ./data/    (gitignored)     pimptune's SQLite certificate store
 ./secrets/ (gitignored)     intune-client-secret.txt
+./rootcrl/ (gitignored)     optional root CA CRL — scripts/03-generate-root-crl.sh output, served by the root-crl container
 ```
