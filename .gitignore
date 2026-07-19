@@ -1,0 +1,19 @@
+# Generated PKI / step-ca runtime state — never commit real key material
+/info/
+/ca/
+/data/
+/secrets/
+/rootcrl/
+
+# Local env
+.env
+
+*.key
+*.crt
+*.pem
+*.csr
+*.jwk
+*.jwk.txt
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,87 @@
+services:
+  step-ca:
+    image: smallstep/step-ca:latest
+    container_name: pimptune-step-ca
+    restart: unless-stopped
+    # Runs as your own uid/gid (set in .env by quickstart.sh) instead of the
+    # image's baked-in uid 1000, so the host-owned files from
+    # scripts/02-bootstrap-step-ca.sh are readable/writable with no chown or
+    # sudo required anywhere in this pipeline.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    # No DOCKER_STEPCA_INIT_* vars — scripts/02-bootstrap-step-ca.sh pre-builds
+    # ./ca/config/ca.json with our own root/intermediate PKI before this ever starts.
+    volumes:
+      - ./ca:/home/step
+    networks:
+      internal:
+        aliases:
+          - step-ca
+
+  pimptune:
+    image: ghcr.io/griefersutherland/pimptune:0.2.0
+    container_name: pimptune
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    depends_on:
+      - step-ca
+    environment:
+      PIMPTUNE_INTUNE_TENANT_ID: "${TENANT_ID}"
+      PIMPTUNE_INTUNE_CLIENT_ID: "${CLIENT_ID}"
+      PIMPTUNE_INTUNE_CLIENT_SECRET_FILE: "/run/secrets/intune-client-secret.txt"
+
+      PIMPTUNE_RA_CRT: "/ca-certs/scep_ra.crt"
+      PIMPTUNE_RA_KEY: "/ca-secrets/scep_ra_key"
+      PIMPTUNE_RA_KEY_PASSWORD_FILE: "/ca-secrets/scep_ra.txt"
+      PIMPTUNE_CA_CHAIN: "/ca-certs/full_chain.pem"
+
+      PIMPTUNE_STEP_API_URL: "https://step-ca:9000"
+      PIMPTUNE_STEP_PROVISIONER_NAME: "pimptune"
+      PIMPTUNE_STEP_JSON_WEB_KEY_FILE: "/ca-secrets/pimptune.jwk"
+      PIMPTUNE_STEP_JSON_WEB_KEY_PASSWORD_FILE: "/ca-secrets/pimptune.jwk.txt"
+      PIMPTUNE_DATABASE_PATH: "/data/pimptune.db"
+    volumes:
+      - ./ca/certs:/ca-certs:ro
+      - ./ca/secrets:/ca-secrets:ro
+      - ./data/pimptune:/data
+      - ./secrets:/run/secrets:ro
+    networks:
+      internal:
+        aliases:
+          - pimptune
+
+  # Serves the root CA's CRL as a static file. Non-standard for a root CA —
+  # see scripts/03-generate-root-crl.sh for why this exists. Requires a
+  # separate Cloudflare Tunnel Public Hostname path route (same hostname as
+  # pimptune, Path ^/rootcrl) pointed at root-crl:80 — set up manually in the
+  # Zero Trust dashboard, see README.md.
+  root-crl:
+    image: nginx:alpine
+    container_name: pimptune-root-crl
+    restart: unless-stopped
+    volumes:
+      - ./rootcrl:/usr/share/nginx/html/rootcrl:ro
+      - ./nginx-rootcrl.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      internal:
+        aliases:
+          - root-crl
+
+  # Publishes `pimptune` to the internet with no exposed host ports or
+  # inbound firewall rules — cloudflared makes an outbound-only connection
+  # to Cloudflare's edge. Configure the public hostname -> service mapping
+  # in the Cloudflare Zero Trust dashboard (Networks > Tunnels); see README.md.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: pimptune-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN}"
+    depends_on:
+      - pimptune
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
