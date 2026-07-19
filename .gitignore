@@ -3,7 +3,6 @@
 /ca/
 /data/
 /secrets/
-/rootcrl/
 
 # Local env
 .env
