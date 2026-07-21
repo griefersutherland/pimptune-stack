@@ -151,6 +151,7 @@ echo -n "$JWK_PASSWORD" > "$STEP_DIR/secrets/pimptune.jwk.txt"
 chmod 600 "$STEP_DIR/secrets/pimptune.jwk.txt"
 
 INIT_OUTPUT=$(docker run --rm \
+    --user "$(id -u):$(id -g)" \
     -v "$(pwd)/$STEP_DIR:/home/step" \
     smallstep/step-ca \
     step ca init \
@@ -199,6 +200,7 @@ chmod 600 "$STEP_DIR/secrets/pimptune.jwk"
 rm -f "$STEP_DIR/secrets/root_ca_key"
 
 FINGERPRINT=$(docker run --rm \
+    --user "$(id -u):$(id -g)" \
     -v "$(pwd)/$STEP_DIR:/home/step" \
     smallstep/step-ca \
     step certificate fingerprint /home/step/certs/root_ca.crt)
