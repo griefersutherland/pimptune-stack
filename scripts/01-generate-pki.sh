@@ -17,7 +17,6 @@ ORG_NAME="${ORG_NAME:-PIMPtune POC}"
 ROOT_CN="${ROOT_CN:-${ORG_NAME} Root CA}"
 INT_CN="${INT_CN:-${ORG_NAME} Issuing CA}"
 RA_CN="${RA_CN:-${ORG_NAME} SCEP RA}"
-PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-scep-dev.example.com}"
 
 # step only accepts h/m/s-scale duration units (no "y"), so these are in hours.
 # 8760h/year ignores leap years — close enough for cert validity, same
@@ -58,29 +57,11 @@ success "Passwords written to $INFO_DIR/*.txt"
 echo ""
 
 info "Creating root CA: $ROOT_CN"
-# Custom template = DefaultRootTemplate + crlDistributionPoints. --profile and
-# --template are mutually exclusive, so this template supplies everything
-# --profile root-ca would otherwise set (subject/issuer/keyUsage/basicConstraints).
-ROOT_TPL=$(mktemp)
-trap 'rm -f "$ROOT_TPL"' EXIT
-cat > "$ROOT_TPL" <<EOF
-{
-	"subject": {{ toJson .Subject }},
-	"issuer": {{ toJson .Subject }},
-	"keyUsage": ["certSign", "crlSign"],
-	"basicConstraints": {
-		"isCA": true,
-		"maxPathLen": 1
-	},
-	"crlDistributionPoints": ["https://${PUBLIC_HOSTNAME}/rootcrl/root_ca.crl"]
-}
-EOF
 step certificate create "$ROOT_CN" \
     "$INFO_DIR/root_ca.crt" "$INFO_DIR/root_ca.key" \
-    --template "$ROOT_TPL" --kty EC --curve P-256 \
+    --profile root-ca --kty EC --curve P-256 \
     --not-after "$ROOT_NOT_AFTER" \
     --no-password --insecure --force
-rm -f "$ROOT_TPL"
 chmod 600 "$INFO_DIR/root_ca.key"
 openssl x509 -in "$INFO_DIR/root_ca.crt" -outform der -out "$INFO_DIR/root_ca.cer"
 success "Root CA created ($INFO_DIR/root_ca.crt, DER copy at root_ca.cer for Intune upload)"
@@ -109,11 +90,6 @@ step certificate create "$RA_CN" \
     --not-after 8760h \
     --force
 success "SCEP RA certificate created"
-echo ""
-
-info "Generating root CRL (see scripts/03-generate-root-crl.sh for why this exists)"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFO_DIR="$INFO_DIR" bash "$SCRIPT_DIR/03-generate-root-crl.sh"
 echo ""
 
 echo -e "${BOLD}${GREEN}############################################${RESET}"
