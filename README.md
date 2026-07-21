@@ -1,5 +1,7 @@
 # pimptune-stack
 
+> **Note:** The `scripts/` in this repo have been modified by Claude (Anthropic) and are still a work in progress. Review them accordingly before relying on them.
+
 A self-contained proof-of-concept deployment of [PIMPtune](https://github.com/griefersutherland/pimptune) — a SCEP proxy for Microsoft Intune-managed device enrollment — fronted by [step-ca](https://smallstep.com/docs/step-ca/) and published to the internet with a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
 
 ```
