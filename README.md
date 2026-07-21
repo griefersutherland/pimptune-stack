@@ -84,7 +84,7 @@ If `pimptune` logs show it successfully querying Microsoft Graph (instead of an 
 4. Set `PUBLIC_HOSTNAME` in `.env` to match *before* running `./scripts/quickstart.sh` — it's what `02-bootstrap-step-ca.sh` uses to bake the right CRL/issuing-cert URLs into every cert `pimptune` issues. If you change it after already bootstrapping, re-run `./scripts/02-bootstrap-step-ca.sh -f` to rebuild `./ca/config` with the new value.
 5. `docker compose up -d cloudflared` (or just `docker compose up -d` for everything) once the token is in `.env`.
 
-At this point `https://${PUBLIC_HOSTNAME}/scep/pkiclient.exe` is your SCEP enrollment endpoint and `https://${PUBLIC_HOSTNAME}/crl` is your CRL distribution point — configure these in your Intune SCEP certificate profile.
+At this point `https://${PUBLIC_HOSTNAME}/scep` is your SCEP enrollment endpoint and `https://${PUBLIC_HOSTNAME}/crl` is your CRL distribution point — configure these in your Intune SCEP certificate profile.
 
 ## Intune configuration profiles
 
@@ -136,7 +136,7 @@ Same as above, as a **separate** profile:
 | Hash algorithm | `SHA-2` |
 | Root certificate | Select the **Root CA trusted-certificate profile** from step 2 |
 | Extended key usage | `Client Authentication` (OID `1.3.6.1.5.5.7.3.2`) |
-| SCEP Server URLs | `https://${PUBLIC_HOSTNAME}/scep/pkiclient.exe` — the same hostname you set in `.env` and mapped in the Cloudflare Tunnel |
+| SCEP Server URLs | `https://${PUBLIC_HOSTNAME}/scep` — the same hostname you set in `.env` and mapped in the Cloudflare Tunnel (Intune appends its own path segments; don't include `/pkiclient.exe` here) |
 
 **Subject name note:** if you enable `pimptune`'s optional device-compliance check, it identifies the requesting device by parsing the certificate's Common Name as either an Intune device ID or an Azure AD device ID — so the Subject name format must be `CN={{DeviceId}}` (Intune device ID) or `CN={{AAD_Device_ID}}` (Azure AD device ID) accordingly. If you're not using the compliance check, any subject format works.
 
