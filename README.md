@@ -2,6 +2,17 @@
 
 > **Note:** The `scripts/` in this repo have been modified by Claude (Anthropic) and are still a work in progress. Review them accordingly before relying on them.
 
+## Thanks
+
+This repo is just bootstrap scripts wiring real projects together - all the
+actual heavy lifting is theirs. Special thanks to
+[PIMPtune](https://github.com/griefersutherland/pimptune) itself, to the
+[Smallstep](https://smallstep.com/) team behind
+[step-ca](https://smallstep.com/docs/step-ca/) and
+[step-cli](https://smallstep.com/docs/step-cli/) (the PKI this entire stack
+is built around), and to [Cloudflare](https://www.cloudflare.com/) for
+Cloudflare Tunnel. None of this is possible without their work.
+
 A self-contained proof-of-concept deployment of [PIMPtune](https://github.com/griefersutherland/pimptune) — a SCEP proxy for Microsoft Intune-managed device enrollment — fronted by [step-ca](https://smallstep.com/docs/step-ca/) and published to the internet with a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
 
 ```
