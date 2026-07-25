@@ -5,8 +5,7 @@
 ## Thanks
 
 This repo is just bootstrap scripts wiring real projects together - all the
-actual heavy lifting is theirs. Special thanks to
-[PIMPtune](https://github.com/griefersutherland/pimptune) itself, to the
+actual heavy lifting is theirs. Special thanks to the
 [Smallstep](https://smallstep.com/) team behind
 [step-ca](https://smallstep.com/docs/step-ca/) and
 [step-cli](https://smallstep.com/docs/step-cli/) (the PKI this entire stack
