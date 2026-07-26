@@ -33,6 +33,16 @@ DEF_TLS_DUR="${DEF_TLS_DUR:-$MAX_TLS_DUR}"
 
 PROVISIONER_NAME="${PROVISIONER_NAME:-pimptune}"
 
+# Optional: public hostname for a Jamf-managed (or other generic SCEP client)
+# enrollment path, served directly by step-ca — pimptune only validates
+# Intune-enrolled devices, so this is a second, independent provisioner using
+# a static shared challenge instead of live Intune validation. Leave unset to
+# skip it entirely (default: skipped, no behavior change). See README.md
+# "Jamf Pro configuration" for the Cloudflare/Jamf-side setup this pairs with.
+JAMF_PUBLIC_HOSTNAME="${JAMF_PUBLIC_HOSTNAME:-}"
+JAMF_PROVISIONER_NAME="${JAMF_PROVISIONER_NAME:-jamf}"
+JAMF_MIN_PUBKEY_LEN="${JAMF_MIN_PUBKEY_LEN:-2048}"
+
 INFO_SRC="${INFO_SRC:-./info}"
 STEP_DIR="${STEP_DIR:-./ca}"
 
@@ -278,8 +288,63 @@ EOF
 success "Files installed, configuration created, CRLs enabled"
 echo ""
 
+if [[ -n "$JAMF_PUBLIC_HOSTNAME" ]]; then
+    info "Adding Jamf SCEP provisioner (JAMF_PUBLIC_HOSTNAME=${JAMF_PUBLIC_HOSTNAME})"
+
+    # step-ca's SCEP provisioner needs an RSA decrypter for the PKCS#7
+    # envelope crypto (our intermediate is EC, which can't do that) — reuse
+    # the same RSA scep_ra cert/key already generated for pimptune's own RA
+    # rather than minting a separate one.
+    JAMF_CHALLENGE=$(openssl rand -base64 24 | tr -d '\n=' | tr '+/' '-_')
+    echo -n "$JAMF_CHALLENGE" > "$STEP_DIR/secrets/jamf_scep_challenge.txt"
+    chmod 600 "$STEP_DIR/secrets/jamf_scep_challenge.txt"
+
+    # decrypterCertificate/decrypterKeyPEM are Go []byte fields under the
+    # hood, so step-ca expects them base64-encoded, not raw PEM text —
+    # pasting raw PEM here throws "illegal base64 data at input byte 0" and
+    # step-ca won't start.
+    DECRYPTER_CERT_B64=$(base64 -w0 < "$STEP_DIR/certs/scep_ra.crt")
+    DECRYPTER_KEY_B64=$(base64 -w0 < "$STEP_DIR/secrets/scep_ra_key")
+
+    jq --arg name "$JAMF_PROVISIONER_NAME" \
+       --arg challenge "$JAMF_CHALLENGE" \
+       --arg cert "$DECRYPTER_CERT_B64" \
+       --arg key "$DECRYPTER_KEY_B64" \
+       --arg keyPassword "$RA_PASSWORD" \
+       --argjson minKeyLen "$JAMF_MIN_PUBKEY_LEN" \
+       --arg minDur "$MIN_TLS_DUR" \
+       --arg maxDur "$MAX_TLS_DUR" \
+       --arg defDur "$DEF_TLS_DUR" \
+       '.authority.provisioners += [{
+            "type": "SCEP",
+            "name": $name,
+            "challenge": $challenge,
+            "minimumPublicKeyLength": $minKeyLen,
+            "includeRoot": true,
+            "decrypterCertificate": $cert,
+            "decrypterKeyPEM": $key,
+            "decrypterKeyPassword": $keyPassword,
+            "claims": {
+                "minTLSCertDuration": $minDur,
+                "maxTLSCertDuration": $maxDur,
+                "defaultTLSCertDuration": $defDur
+            }
+       }]' "$STEP_DIR/config/ca.json" > "$STEP_DIR/config/ca.json.tmp" \
+        && mv "$STEP_DIR/config/ca.json.tmp" "$STEP_DIR/config/ca.json" \
+        || { error "Failed to add jamf SCEP provisioner to ca.json"; exit 1; }
+
+    success "Jamf SCEP provisioner '$JAMF_PROVISIONER_NAME' added"
+    echo ""
+fi
+
 echo -e "${BOLD}${GREEN}####################################${RESET}"
 echo -e "${BOLD}${GREEN}#   step-ca bootstrap complete!   #${RESET}"
 echo -e "${BOLD}${GREEN}####################################${RESET}"
 echo ""
 info "Next: fill in .env (Intune credentials + CLOUDFLARE_TUNNEL_TOKEN) and run 'docker compose up -d'."
+
+if [[ -n "$JAMF_PUBLIC_HOSTNAME" ]]; then
+    echo ""
+    info "Jamf SCEP provisioner '$JAMF_PROVISIONER_NAME' static challenge: $(cat "$STEP_DIR/secrets/jamf_scep_challenge.txt")"
+    info "Add a second Cloudflare Public Hostname (${JAMF_PUBLIC_HOSTNAME} -> https://step-ca:9000, with 'No TLS Verify') and configure Jamf's SCEP payload — see README.md 'Jamf Pro configuration'."
+fi

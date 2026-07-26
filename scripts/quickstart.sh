@@ -54,4 +54,9 @@ echo ""
 echo -e "${GREEN}${BOLD}Quickstart complete.${RESET} Next steps:"
 echo "  1. Add your Intune client secret: echo -n '...' > secrets/intune-client-secret.txt && chmod 600 secrets/intune-client-secret.txt"
 echo "  2. Create a Cloudflare Tunnel with a Public Hostname matching PUBLIC_HOSTNAME in .env, pointing at pimptune:8080 (see README.md)"
-echo "  3. docker compose up -d"
+if [[ -n "${JAMF_PUBLIC_HOSTNAME:-}" ]]; then
+    echo "  3. Add a second Cloudflare Public Hostname matching JAMF_PUBLIC_HOSTNAME in .env, pointing at step-ca:9000 with 'No TLS Verify' (see README.md 'Jamf Pro configuration')"
+    echo "  4. docker compose up -d"
+else
+    echo "  3. docker compose up -d"
+fi

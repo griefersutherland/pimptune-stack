@@ -165,45 +165,18 @@ Assign this profile, and the two trusted-certificate profiles, to the same group
 
 What works instead: `step-ca` underneath `pimptune` is a full CA, and it supports a second, completely independent SCEP provisioner authenticated with a plain static shared secret — the standard model Jamf's SCEP payload expects. This runs alongside `pimptune` without touching it or the Intune-facing enrollment flow at all.
 
-### 1. Add a SCEP provisioner to step-ca
+### 1. Set `JAMF_PUBLIC_HOSTNAME` before bootstrapping
 
-The intermediate CA this repo generates is EC (P-256), but SCEP's envelope encryption requires RSA — step-ca handles the mismatch with a separate `decrypterCertificate`/`decrypterKey` pair on the provisioner, distinct from the intermediate's own key. Reuse the RSA `scep_ra` cert/key this repo already generates for `pimptune`'s own RA (`ca/certs/scep_ra.crt` / `ca/secrets/scep_ra_key`) rather than minting a new one.
+Set `JAMF_PUBLIC_HOSTNAME` in `.env` (see `.env.example`) to whatever hostname you plan to put Jamf's SCEP traffic on, e.g. `jamfscep.yourdomain.com`. When it's set, `scripts/02-bootstrap-step-ca.sh` automatically adds a second SCEP provisioner named `jamf` to `ca/config/ca.json`, alongside the `pimptune` one — no manual `ca.json` editing needed. It:
 
-Add a provisioner block to `ca/config/ca.json`'s `authority.provisioners` array:
+- generates a static challenge secret and saves it to `ca/secrets/jamf_scep_challenge.txt` (also printed at the end of the bootstrap run)
+- reuses the RSA `scep_ra` cert/key this repo already generates for `pimptune`'s own RA (`ca/certs/scep_ra.crt` / `ca/secrets/scep_ra_key`) as the provisioner's `decrypterCertificate`/`decrypterKey` — needed because the intermediate CA this repo generates is EC (P-256), but SCEP's envelope encryption requires RSA
 
-```json
-{
-    "type": "SCEP",
-    "name": "jamf",
-    "challenge": "<a-strong-static-secret>",
-    "minimumPublicKeyLength": 2048,
-    "includeRoot": true,
-    "decrypterCertificate": "<base64 of ca/certs/scep_ra.crt>",
-    "decrypterKeyPEM": "<base64 of ca/secrets/scep_ra_key>",
-    "decrypterKeyPassword": "<contents of ca/secrets/scep_ra.txt>"
-}
-```
+If you're bootstrapping for the first time, just set the var and run `./scripts/quickstart.sh` (or `./scripts/02-bootstrap-step-ca.sh` directly) as usual. If `step-ca` is already bootstrapped without it, set `JAMF_PUBLIC_HOSTNAME` and re-run `./scripts/02-bootstrap-step-ca.sh -f` to rebuild `./ca/config` with the provisioner added — check `ca/secrets/jamf_scep_challenge.txt` for the challenge value afterward.
 
-`decrypterCertificate` and `decrypterKeyPEM` are Go `[]byte` fields under the hood, so **they must be base64-encoded** — the whole PEM block, headers included, not raw PEM text. Pasting raw PEM here throws `illegal base64 data at input byte 0` on startup and `step-ca` won't come up. Generate the values with:
+Leaving `JAMF_PUBLIC_HOSTNAME` unset skips all of this — no provisioner gets added, nothing else changes.
 
-```bash
-base64 -w0 ca/certs/scep_ra.crt
-base64 -w0 ca/secrets/scep_ra_key
-```
-
-Then restart `step-ca` to load the new provisioner:
-
-```bash
-docker compose restart step-ca
-```
-
-Verify it's serving before moving on:
-
-```bash
-docker exec pimptune-step-ca curl -sk -o /dev/null -w '%{http_code}\n' \
-  'https://localhost:9000/scep/jamf/pkiclient.exe?operation=GetCACert&message=jamf'
-# should print 200
-```
+**Note on `decrypterKeyPassword`:** unlike the other secrets in this repo (which stay in separate password files, e.g. `ca/secrets/scep_ra.txt`), step-ca's SCEP provisioner schema has no external-file option for `decrypterKeyPassword` — it has to live in `ca.json` itself, in cleartext. That makes `ca.json`'s file permissions more load-bearing than before; same "this is a POC, not hardened" caveat as the rest of this repo (see "What this is / isn't" above).
 
 ### 2. Expose it through the Cloudflare Tunnel
 
@@ -225,7 +198,7 @@ Your Jamf SCEP URL is now `https://jamfscep.yourdomain.com/scep/jamf/pkiclient.e
 |---|---|
 | URL | `https://jamfscep.yourdomain.com/scep/jamf/pkiclient.exe` |
 | Challenge type | `Static` |
-| Challenge password | the `challenge` value set on the `jamf` provisioner above |
+| Challenge password | contents of `ca/secrets/jamf_scep_challenge.txt` (also printed at the end of the `02-bootstrap-step-ca.sh` run) |
 | Certificate Authority | the root/intermediate certs uploaded above |
 | Key size | `2048` |
 | Subject | e.g. `CN=$SERIALNUMBER` |
