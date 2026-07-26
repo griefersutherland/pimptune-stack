@@ -159,6 +159,84 @@ Assign this profile, and the two trusted-certificate profiles, to the same group
 - `docker compose logs -f pimptune` on the server — a successful enrollment logs the CSR validation, Intune challenge verification, and step-ca signing steps in sequence.
 - On the device: `certlm.msc` → Personal → Certificates should show the issued cert, and Trusted Root/Intermediate Certification Authorities should show the imported CA chain.
 
+## Jamf Pro (or other generic SCEP client) configuration
+
+`pimptune` only works for Microsoft Intune-enrolled devices — its whole job is validating each SCEP challenge password against a live call to Microsoft Graph, scoped to the tenant in `.env`. A Jamf-managed Mac was never enrolled in that Intune tenant, so it can never produce a challenge `pimptune` will accept — pointing Jamf's SCEP profile at `pimptune`'s URL will just fail challenge validation on every request.
+
+What works instead: `step-ca` underneath `pimptune` is a full CA, and it supports a second, completely independent SCEP provisioner authenticated with a plain static shared secret — the standard model Jamf's SCEP payload expects. This runs alongside `pimptune` without touching it or the Intune-facing enrollment flow at all.
+
+### 1. Add a SCEP provisioner to step-ca
+
+The intermediate CA this repo generates is EC (P-256), but SCEP's envelope encryption requires RSA — step-ca handles the mismatch with a separate `decrypterCertificate`/`decrypterKey` pair on the provisioner, distinct from the intermediate's own key. Reuse the RSA `scep_ra` cert/key this repo already generates for `pimptune`'s own RA (`ca/certs/scep_ra.crt` / `ca/secrets/scep_ra_key`) rather than minting a new one.
+
+Add a provisioner block to `ca/config/ca.json`'s `authority.provisioners` array:
+
+```json
+{
+    "type": "SCEP",
+    "name": "jamf",
+    "challenge": "<a-strong-static-secret>",
+    "minimumPublicKeyLength": 2048,
+    "includeRoot": true,
+    "decrypterCertificate": "<base64 of ca/certs/scep_ra.crt>",
+    "decrypterKeyPEM": "<base64 of ca/secrets/scep_ra_key>",
+    "decrypterKeyPassword": "<contents of ca/secrets/scep_ra.txt>"
+}
+```
+
+`decrypterCertificate` and `decrypterKeyPEM` are Go `[]byte` fields under the hood, so **they must be base64-encoded** — the whole PEM block, headers included, not raw PEM text. Pasting raw PEM here throws `illegal base64 data at input byte 0` on startup and `step-ca` won't come up. Generate the values with:
+
+```bash
+base64 -w0 ca/certs/scep_ra.crt
+base64 -w0 ca/secrets/scep_ra_key
+```
+
+Then restart `step-ca` to load the new provisioner:
+
+```bash
+docker compose restart step-ca
+```
+
+Verify it's serving before moving on:
+
+```bash
+docker exec pimptune-step-ca curl -sk -o /dev/null -w '%{http_code}\n' \
+  'https://localhost:9000/scep/jamf/pkiclient.exe?operation=GetCACert&message=jamf'
+# should print 200
+```
+
+### 2. Expose it through the Cloudflare Tunnel
+
+`step-ca` and `cloudflared` already share the `internal` Docker network (see `docker-compose.yaml`), so no second tunnel is needed — add a second **Public Hostname** on the same tunnel that already serves `pimptune`:
+
+- **Subdomain/domain**: something distinct from `PUBLIC_HOSTNAME`, e.g. `jamfscep.yourdomain.com`
+- **Service**: `HTTPS` → `step-ca:9000`
+- **Additional application settings → TLS → No TLS Verify**: enable this. `step-ca`'s cert on `:9000` is self-issued and won't be trusted by Cloudflare's edge, but that hop never leaves the internal Docker network, so it's the same trust model already used for `pimptune:8080`. If requests 502 with `x509: certificate signed by unknown authority` in `docker compose logs cloudflared`, this setting didn't actually save — go back into the Public Hostname's edit screen and re-enable it.
+
+Your Jamf SCEP URL is now `https://jamfscep.yourdomain.com/scep/jamf/pkiclient.exe`.
+
+### 3. Jamf Pro setup
+
+**PKI Certificates** (Settings → Global Management → PKI Certificates): upload `ca/certs/root_ca.cer` and `ca/certs/intermediate_ca.cer` as trusted CAs.
+
+**SCEP payload** (Devices → Configuration Profiles → New → SCEP):
+
+| Setting | Value |
+|---|---|
+| URL | `https://jamfscep.yourdomain.com/scep/jamf/pkiclient.exe` |
+| Challenge type | `Static` |
+| Challenge password | the `challenge` value set on the `jamf` provisioner above |
+| Certificate Authority | the root/intermediate certs uploaded above |
+| Key size | `2048` |
+| Subject | e.g. `CN=$SERIALNUMBER` |
+| Subject Alternative Name | for UPN-style identity: Type `NT Principal Name`, Value `$EMAIL` — Jamf has no dedicated `$UPN` variable, so `$EMAIL` is the standard stand-in unless your org's UPN differs from email, in which case map the real `userPrincipalName` LDAP attribute in Jamf's LDAP server config first and use that mapped variable instead |
+
+Jamf's available variables differ slightly by version — type `$` in the Subject/SAN Value field in the profile editor to see the live autocomplete list for your instance rather than trusting any hardcoded list.
+
+Assign to a test device/group and verify: `docker compose logs -f step-ca` on the server for the SCEP request, and Keychain Access on the device for the issued cert plus the imported CA chain.
+
+**Note on the shared challenge:** unlike `pimptune`'s per-device Intune validation, this provisioner's `challenge` is one static secret shared by every device using the profile — fine for a POC, but anyone who extracts it could request certs outside Jamf's control. `step-ca`'s SCEP provisioner also supports a `SCEPCHALLENGE` webhook for per-device dynamic challenges if this needs to be tightened up later.
+
 ## Going to production
 
 If you're moving past the POC stage, the biggest change is where the root CA key lives. `01-generate-pki.sh` generates root, intermediate, and RA all on one networked machine — fine for a POC, not fine once this is issuing real certificates. The fix is an **offline root**: the root key is generated on a machine that never touches a network, ever, and only ever produces signatures for intermediate CSRs. The intermediate's key still lives on the server (`step-ca` needs it to sign day-to-day certs), which is the normal, acceptable tradeoff — compromising the intermediate lets an attacker mint certs, but you can revoke and rotate it without re-establishing trust on every device, because the root (which every device actually trusts) was never exposed.
