@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   step-ca:
     image: smallstep/step-ca:latest
@@ -16,6 +22,15 @@ services:
       internal:
         aliases:
           - step-ca
+    # Bumped retention vs. the default-logging anchor: this is the actual CA
+    # audit trail (every SCEP GetCACert/PKIOperation, with issued cert
+    # details) and enrollment volume is naturally low - one event per device
+    # per renewal cycle, not a hot path - so keeping more history here is cheap.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "10"
 
   pimptune:
     image: ghcr.io/griefersutherland/pimptune:0.2.0
@@ -24,6 +39,7 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     depends_on:
       - step-ca
+    logging: *default-logging
     environment:
       PIMPTUNE_INTUNE_TENANT_ID: "${TENANT_ID}"
       PIMPTUNE_INTUNE_CLIENT_ID: "${CLIENT_ID}"
@@ -64,6 +80,7 @@ services:
       - pimptune
     networks:
       - internal
+    logging: *default-logging
 
 networks:
   internal:
