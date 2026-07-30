@@ -203,7 +203,7 @@ Your Jamf SCEP URL is now `https://jamfscep.yourdomain.com/scep/jamf/pkiclient.e
 | Key size | `2048` |
 | Subject | e.g. `CN=$SERIALNUMBER` |
 | Subject Alternative Name | for UPN-style identity: Type `NT Principal Name`, Value `$EMAIL` — Jamf has no dedicated `$UPN` variable, so `$EMAIL` is the standard stand-in unless your org's UPN differs from email, in which case map the real `userPrincipalName` LDAP attribute in Jamf's LDAP server config first and use that mapped variable instead |
-| Subject Alternative Name (add'l row) | *Only if this cert will also authenticate RADIUS/802.1x via [mid-radius-stack](https://github.com/griefersutherland/mid-radius-stack):* Type `URI`, Value `urn:example.com:jamf-serial:$SERIALNUMBER` (swap `urn:example.com` for that stack's actual `URN_PREFIX`) — mid-radius-stack's `intune-radius-helper` checks this URI against a Jamf Pro Smart Group to decide network access; see its README's "Jamf Pro device lookup" section |
+| Subject Alternative Name (add'l row) | *Only if this cert will also authenticate RADIUS/802.1x via [mid-radius-stack](https://github.com/griefersutherland/mid-radius-stack):* Type `URI`, Value `urn:example.com:jamf-serial:$SERIALNUMBER` (swap `urn:example.com` for that stack's actual `URN_PREFIX`) — mid-radius-stack's `mid-radius-helper` checks this URI against a Jamf Pro Smart Group to decide network access; see its README's "Jamf Pro device lookup" section |
 
 Jamf's available variables differ slightly by version — type `$` in the Subject/SAN Value field in the profile editor to see the live autocomplete list for your instance rather than trusting any hardcoded list. SCEP profiles support multiple SAN entries — add both rows above if you need both.
 
